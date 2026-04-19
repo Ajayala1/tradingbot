@@ -66,23 +66,41 @@ TRAIL_START = 0.02
 TRAIL_GAP = 0.02
 
 # ==============================
-# SAFE API
+# 🔥 MULTI BINANCE ENDPOINTS
 # ==============================
+BASE_URLS = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api3.binance.com"
+]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
 def get_data(symbol):
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=50"
-        res = requests.get(url, timeout=10)
-        data = res.json()
+    for base in BASE_URLS:
+        try:
+            url = f"{base}/api/v3/klines?symbol={symbol}&interval=15m&limit=50"
+            res = requests.get(url, headers=HEADERS, timeout=10)
 
-        if not isinstance(data, list) or len(data) < 20:
-            return None, None
+            if res.status_code != 200:
+                continue
 
-        closes = [float(c[4]) for c in data]
-        volumes = [float(c[5]) for c in data]
+            data = res.json()
 
-        return closes, volumes
-    except:
-        return None, None
+            if not isinstance(data, list) or len(data) < 20:
+                continue
+
+            closes = [float(c[4]) for c in data]
+            volumes = [float(c[5]) for c in data]
+
+            return closes, volumes
+
+        except:
+            continue
+
+    return None, None
 
 # ==============================
 # INDICATORS
