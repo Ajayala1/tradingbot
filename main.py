@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import time
 import csv
+import os
 
 # ==============================
 # 🔐 TELEGRAM SETTINGS
@@ -10,15 +11,13 @@ TELEGRAM_TOKEN = "8755159897:AAGgtPESQOJG5I48ECf72-cbIPoC60dCQZs"
 CHAT_ID = "1037106335"
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {
-        "chat_id": CHAT_ID,
-        "text": msg
-    }
-    try:
-        requests.post(url, data=data)
-    except:
-        print("Telegram Error")
+    if TELEGRAM_TOKEN and CHAT_ID:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": msg}
+        try:
+            requests.post(url, data=data)
+        except:
+            print("Telegram Error")
 
 # ==============================
 # ⚙️ BOT VARIABLES
@@ -31,7 +30,7 @@ trade_type = ""
 stop_loss = 0
 
 # ==============================
-# 🔥 COINS (50)
+# 🔥 COINS
 # ==============================
 all_symbols = [
 "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","MATICUSDT","DOTUSDT","LTCUSDT",
@@ -47,21 +46,19 @@ batch_size = 10
 current_index = 0
 
 # ==============================
-# 🔥 SETTINGS
+# SETTINGS
 # ==============================
 VOLUME_MULTIPLIER = 1.5
 PRICE_THRESHOLD = 0.002
-
 SL_PERCENT = 0.015
 TRAIL_START = 0.02
 TRAIL_GAP = 0.02
 
 # ==============================
-# 🔁 ROTATION FUNCTION
+# ROTATION
 # ==============================
 def get_active_symbols():
     global current_index
-
     start = current_index
     end = start + batch_size
 
@@ -75,17 +72,26 @@ def get_active_symbols():
     return priority_symbols + rotating
 
 # ==============================
-# 📊 DATA FUNCTIONS
+# SAFE API CALL
 # ==============================
 def get_data(symbol, interval):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=50"
-    data = requests.get(url).json()
+    try:
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=50"
+        data = requests.get(url, timeout=10).json()
 
-    closes = [float(c[4]) for c in data]
-    volumes = [float(c[5]) for c in data]
+        if not isinstance(data, list) or len(data) < 20:
+            return None, None
 
-    return closes, volumes
+        closes = [float(c[4]) for c in data]
+        volumes = [float(c[5]) for c in data]
 
+        return closes, volumes
+    except:
+        return None, None
+
+# ==============================
+# INDICATORS
+# ==============================
 def indicators(closes, volumes):
     df = pd.DataFrame({"close": closes, "volume": volumes})
 
@@ -100,30 +106,35 @@ def indicators(closes, volumes):
     return df
 
 # ==============================
-# 🔄 MAIN LOOP
+# MAIN LOOP
 # ==============================
 while True:
-    print("\n================ MARKET CHECK ================")
+    print("\n========= MARKET CHECK =========")
 
     active_symbols = get_active_symbols()
-    print("Active Coins:", active_symbols)
+    print("Active:", active_symbols)
 
     for symbol in active_symbols:
         try:
-            # 4H support/resistance
+            # 4H
             closes_4h, _ = get_data(symbol, "4h")
+            if closes_4h is None:
+                continue
             support = min(closes_4h[-20:])
             resistance = max(closes_4h[-20:])
 
-            # 1H trend
+            # 1H
             closes_1h, vol_1h = get_data(symbol, "1h")
+            if closes_1h is None:
+                continue
             df_1h = indicators(closes_1h, vol_1h)
-
             trend_up = df_1h["close"].iloc[-1] > df_1h["EMA20"].iloc[-1]
             trend_down = df_1h["close"].iloc[-1] < df_1h["EMA20"].iloc[-1]
 
-            # 15m entry
+            # 15m
             closes_15m, vol_15m = get_data(symbol, "15m")
+            if closes_15m is None:
+                continue
             df_15m = indicators(closes_15m, vol_15m)
 
             price = df_15m["close"].iloc[-1]
@@ -133,27 +144,11 @@ while True:
 
             avg_vol = df_15m["volume"].rolling(20).mean().iloc[-1]
             cur_vol = df_15m["volume"].iloc[-1]
-
             price_change = (price - prev_price) / prev_price
 
-            trend = "UP 📈" if trend_up else "DOWN 📉"
-            volume_status = "HIGH 🔥" if cur_vol >= avg_vol * VOLUME_MULTIPLIER else "LOW"
+            print(f"{symbol} | Price: {round(price,2)} | RSI: {round(rsi,2)}")
 
-            # ================= DISPLAY =================
-            print("\n--------------------------------")
-            print(f"COIN: {symbol}")
-            print(f"Price: {round(price,2)}")
-            print(f"Support: {round(support,2)}")
-            print(f"Resistance: {round(resistance,2)}")
-            print(f"Trend: {trend}")
-            print(f"EMA: {round(ema,2)}")
-            print(f"RSI: {round(rsi,2)}")
-            print(f"Volume: {volume_status}")
-            print(f"Price Change: {round(price_change*100,2)}%")
-            print(f"Current Trade: {trade_type if trade_open else 'No Trade'}")
-            print(f"Stop Loss: {round(stop_loss,2)}")
-
-            # ================= LONG ENTRY =================
+            # BUY
             if (
                 not trade_open and
                 price <= support * 1.02 and
@@ -163,9 +158,8 @@ while True:
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change > PRICE_THRESHOLD
             ):
-                print("Decision: 📈 BUY")
-
-                send_telegram(f"📈 BUY {symbol}\nPrice: {price}\nSupport: {support}\nTrend: {trend}\nRSI: {round(rsi,2)}")
+                print("BUY")
+                send_telegram(f"📈 BUY {symbol} @ {price}")
 
                 trade_open = True
                 entry_price = price
@@ -174,7 +168,7 @@ while True:
                 stop_loss = price * (1 - SL_PERCENT)
                 break
 
-            # ================= SHORT ENTRY =================
+            # SHORT
             elif (
                 not trade_open and
                 price >= resistance * 0.98 and
@@ -184,9 +178,8 @@ while True:
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change < -PRICE_THRESHOLD
             ):
-                print("Decision: 📉 SHORT SELL")
-
-                send_telegram(f"📉 SHORT {symbol}\nPrice: {price}\nResistance: {resistance}\nTrend: {trend}\nRSI: {round(rsi,2)}")
+                print("SHORT")
+                send_telegram(f"📉 SHORT {symbol} @ {price}")
 
                 trade_open = True
                 entry_price = price
@@ -195,7 +188,7 @@ while True:
                 stop_loss = price * (1 + SL_PERCENT)
                 break
 
-            # ================= TRAILING + EXIT =================
+            # EXIT
             elif trade_open and symbol == current_symbol:
 
                 if trade_type == "long":
@@ -207,14 +200,10 @@ while True:
                             stop_loss = new_sl
 
                     if price <= stop_loss:
-                        print("Decision: EXIT 🔴")
                         profit = price - entry_price
                         balance += profit
 
-                        send_telegram(f"🔴 EXIT {symbol}\nType: LONG\nEntry: {entry_price}\nExit: {price}\nProfit: {round(profit,2)}\nBalance: {round(balance,2)}")
-
-                        with open("trades.csv", "a", newline="") as f:
-                            csv.writer(f).writerow([symbol, "LONG", entry_price, price, profit])
+                        send_telegram(f"🔴 EXIT LONG {symbol} Profit: {round(profit,2)}")
 
                         trade_open = False
 
@@ -227,22 +216,15 @@ while True:
                             stop_loss = new_sl
 
                     if price >= stop_loss:
-                        print("Decision: EXIT 🔴")
                         profit = entry_price - price
                         balance += profit
 
-                        send_telegram(f"🔴 EXIT {symbol}\nType: SHORT\nEntry: {entry_price}\nExit: {price}\nProfit: {round(profit,2)}\nBalance: {round(balance,2)}")
-
-                        with open("trades.csv", "a", newline="") as f:
-                            csv.writer(f).writerow([symbol, "SHORT", entry_price, price, profit])
+                        send_telegram(f"🔴 EXIT SHORT {symbol} Profit: {round(profit,2)}")
 
                         trade_open = False
-
-            else:
-                print("Decision: SKIP ⏸️")
 
         except Exception as e:
             print("Error:", e)
 
-    print("\nBalance:", balance)
+    print("Balance:", balance)
     time.sleep(60)
