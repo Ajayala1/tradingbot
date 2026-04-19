@@ -6,20 +6,20 @@ import os
 from flask import Flask
 from threading import Thread
 
-# 🔥 KEEP ALIVE (IMPORTANT)
+# ==============================
+# KEEP ALIVE
 # ==============================
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is running"
+    return "Bot Running"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    Thread(target=run).start()
 
 # ==============================
 # 🔐 TELEGRAM SETTINGS
@@ -32,85 +32,31 @@ def send_telegram(msg):
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                data={"chat_id": CHAT_ID, "text": msg},
-                timeout=5
+                data={"chat_id": CHAT_ID, "text": msg}
             )
         except:
-            print("Telegram Error")
+            print("Telegram error")
 
 # ==============================
-# VARIABLES
+# COINS (CoinGecko IDs)
 # ==============================
-balance = 5000
-trade_open = False
-entry_price = 0
-current_symbol = ""
-trade_type = ""
-stop_loss = 0
-
-# ==============================
-# COINS
-# ==============================
-symbols = [
-"BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
-"ADAUSDT","DOGEUSDT","MATICUSDT","DOTUSDT","LTCUSDT"
-]
-
-# ==============================
-# SETTINGS
-# ==============================
-VOLUME_MULTIPLIER = 1.5
-PRICE_THRESHOLD = 0.002
-SL_PERCENT = 0.015
-TRAIL_START = 0.02
-TRAIL_GAP = 0.02
-
-# ==============================
-# 🔥 MULTI BINANCE ENDPOINTS
-# ==============================
-BASE_URLS = [
-    "https://api.binance.com",
-    "https://api1.binance.com",
-    "https://api3.binance.com"
-]
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
+coins = {
+    "bitcoin": "BTC",
+    "ethereum": "ETH",
+    "binancecoin": "BNB",
+    "solana": "SOL",
+    "ripple": "XRP"
 }
-
-def get_data(symbol):
-    for base in BASE_URLS:
-        try:
-            url = f"{base}/api/v3/klines?symbol={symbol}&interval=15m&limit=50"
-            res = requests.get(url, headers=HEADERS, timeout=10)
-
-            if res.status_code != 200:
-                continue
-
-            data = res.json()
-
-            if not isinstance(data, list) or len(data) < 20:
-                continue
-
-            closes = [float(c[4]) for c in data]
-            volumes = [float(c[5]) for c in data]
-
-            return closes, volumes
-
-        except:
-            continue
-
-    return None, None
 
 # ==============================
 # INDICATORS
 # ==============================
-def indicators(closes, volumes):
-    df = pd.DataFrame({"close": closes, "volume": volumes})
+def indicators(prices):
+    df = pd.DataFrame(prices, columns=["price"])
 
-    df["EMA20"] = df["close"].ewm(span=20).mean()
+    df["EMA20"] = df["price"].ewm(span=20).mean()
 
-    delta = df["close"].diff()
+    delta = df["price"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
@@ -119,92 +65,102 @@ def indicators(closes, volumes):
     return df
 
 # ==============================
+# FETCH DATA (CoinGecko)
+# ==============================
+def get_data(coin_id):
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart?vs_currency=usd&days=1&interval=minute"
+        data = requests.get(url, timeout=10).json()
+
+        prices = [p[1] for p in data["prices"]]
+
+        if len(prices) < 30:
+            return None
+
+        return prices[-50:]  # last 50 points
+
+    except:
+        return None
+
+# ==============================
+# VARIABLES
+# ==============================
+balance = 5000
+trade_open = False
+entry_price = 0
+current_coin = ""
+trade_type = ""
+stop_loss = 0
+
+# SETTINGS
+SL_PERCENT = 0.015
+TRAIL_START = 0.02
+TRAIL_GAP = 0.02
+
+# ==============================
+# START
+# ==============================
+keep_alive()
+
+# ==============================
 # MAIN LOOP
 # ==============================
 while True:
-    print("\n========= MARKET CHECK =========")
+    print("\n===== MARKET CHECK =====")
 
-    for symbol in symbols:
+    for coin_id, symbol in coins.items():
         try:
-            closes, volumes = get_data(symbol)
+            prices = get_data(coin_id)
 
-            if closes is None:
+            if prices is None:
                 print(f"{symbol} ❌ data failed")
                 continue
 
-            df = indicators(closes, volumes)
+            df = indicators(prices)
 
-            price = df["close"].iloc[-1]
-            prev_price = df["close"].iloc[-2]
+            price = df["price"].iloc[-1]
             ema = df["EMA20"].iloc[-1]
             rsi = df["RSI"].iloc[-1]
 
-            # 🔥 SUPPORT / RESISTANCE
-            support = min(df["close"].iloc[-20:])
-            resistance = max(df["close"].iloc[-20:])
-
-            # 🔥 TREND
-            trend_up = price > ema
-            trend_down = price < ema
-
-            avg_vol = df["volume"].rolling(20).mean().iloc[-1]
-            cur_vol = df["volume"].iloc[-1]
-
-            price_change = (price - prev_price) / prev_price
+            support = min(df["price"].iloc[-20:])
+            resistance = max(df["price"].iloc[-20:])
 
             print(f"{symbol} | Price: {round(price,2)} | RSI: {round(rsi,2)}")
 
-            # ================= BUY =================
-            if (
-                not trade_open and
-                price <= support * 1.02 and
-                trend_up and
-                rsi < 30 and
-                cur_vol >= avg_vol * VOLUME_MULTIPLIER and
-                price_change > PRICE_THRESHOLD
-            ):
+            # BUY
+            if not trade_open and price <= support * 1.02 and price > ema and rsi < 30:
                 print("📈 BUY")
                 send_telegram(f"📈 BUY {symbol} @ {price}")
 
                 trade_open = True
                 entry_price = price
-                current_symbol = symbol
+                current_coin = symbol
                 trade_type = "long"
                 stop_loss = price * (1 - SL_PERCENT)
 
-            # ================= SHORT =================
-            elif (
-                not trade_open and
-                price >= resistance * 0.98 and
-                trend_down and
-                rsi > 70 and
-                cur_vol >= avg_vol * VOLUME_MULTIPLIER and
-                price_change < -PRICE_THRESHOLD
-            ):
+            # SHORT
+            elif not trade_open and price >= resistance * 0.98 and price < ema and rsi > 70:
                 print("📉 SHORT")
                 send_telegram(f"📉 SHORT {symbol} @ {price}")
 
                 trade_open = True
                 entry_price = price
-                current_symbol = symbol
+                current_coin = symbol
                 trade_type = "short"
                 stop_loss = price * (1 + SL_PERCENT)
 
-            # ================= EXIT =================
-            elif trade_open and symbol == current_symbol:
+            # EXIT
+            elif trade_open and symbol == current_coin:
 
                 if trade_type == "long":
                     profit_pct = (price - entry_price) / entry_price
 
                     if profit_pct >= TRAIL_START:
-                        new_sl = price * (1 - TRAIL_GAP)
-                        if new_sl > stop_loss:
-                            stop_loss = new_sl
+                        stop_loss = max(stop_loss, price * (1 - TRAIL_GAP))
 
                     if price <= stop_loss:
                         profit = price - entry_price
                         balance += profit
-
                         send_telegram(f"🔴 EXIT LONG {symbol} Profit: {round(profit,2)}")
                         trade_open = False
 
@@ -212,21 +168,18 @@ while True:
                     profit_pct = (entry_price - price) / entry_price
 
                     if profit_pct >= TRAIL_START:
-                        new_sl = price * (1 + TRAIL_GAP)
-                        if new_sl < stop_loss:
-                            stop_loss = new_sl
+                        stop_loss = min(stop_loss, price * (1 + TRAIL_GAP))
 
                     if price >= stop_loss:
                         profit = entry_price - price
                         balance += profit
-
                         send_telegram(f"🔴 EXIT SHORT {symbol} Profit: {round(profit,2)}")
                         trade_open = False
 
-            time.sleep(1)  # 🔥 avoid rate limit
+            time.sleep(2)
 
         except Exception as e:
-            print(f"{symbol} ERROR:", e)
+            print(symbol, "ERROR:", e)
 
     print("Balance:", balance)
     time.sleep(60)
