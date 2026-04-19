@@ -82,10 +82,7 @@ def get_data(symbol, interval):
         res = requests.get(url, timeout=10)
         data = res.json()
 
-        if not isinstance(data, list):
-            return None, None
-
-        if len(data) < 20:
+        if not isinstance(data, list) or len(data) < 20:
             return None, None
 
         closes = [float(c[4]) for c in data]
@@ -122,16 +119,16 @@ while True:
 
     for symbol in active_symbols:
         try:
-            # 4H
-            closes_4h, _ = get_data(symbol, "4h")
-            if closes_4h is None:
-                print(f"{symbol} ❌ 4H data failed")
+            # 🔥 SUPPORT / RESISTANCE (1H)
+            closes_sr, _ = get_data(symbol, "1h")
+            if closes_sr is None:
+                print(f"{symbol} ❌ SR data failed")
                 continue
 
-            support = min(closes_4h[-20:])
-            resistance = max(closes_4h[-20:])
+            support = min(closes_sr[-20:])
+            resistance = max(closes_sr[-20:])
 
-            # 1H
+            # 🔥 TREND (1H)
             closes_1h, vol_1h = get_data(symbol, "1h")
             if closes_1h is None:
                 print(f"{symbol} ❌ 1H data failed")
@@ -141,7 +138,7 @@ while True:
             trend_up = df_1h["close"].iloc[-1] > df_1h["EMA20"].iloc[-1]
             trend_down = df_1h["close"].iloc[-1] < df_1h["EMA20"].iloc[-1]
 
-            # 15m
+            # 🔥 ENTRY (15m)
             closes_15m, vol_15m = get_data(symbol, "15m")
             if closes_15m is None:
                 print(f"{symbol} ❌ 15m data failed")
@@ -161,7 +158,7 @@ while True:
 
             print(f"{symbol} | Price: {round(price,2)} | RSI: {round(rsi,2)}")
 
-            # BUY
+            # ================= BUY =================
             if (
                 not trade_open and
                 price <= support * 1.02 and
@@ -181,7 +178,7 @@ while True:
                 stop_loss = price * (1 - SL_PERCENT)
                 break
 
-            # SHORT
+            # ================= SHORT =================
             elif (
                 not trade_open and
                 price >= resistance * 0.98 and
@@ -201,7 +198,7 @@ while True:
                 stop_loss = price * (1 + SL_PERCENT)
                 break
 
-            # EXIT
+            # ================= EXIT =================
             elif trade_open and symbol == current_symbol:
 
                 if trade_type == "long":
@@ -217,7 +214,6 @@ while True:
                         balance += profit
 
                         send_telegram(f"🔴 EXIT LONG {symbol} Profit: {round(profit,2)}")
-
                         trade_open = False
 
                 elif trade_type == "short":
@@ -233,10 +229,9 @@ while True:
                         balance += profit
 
                         send_telegram(f"🔴 EXIT SHORT {symbol} Profit: {round(profit,2)}")
-
                         trade_open = False
 
-            time.sleep(1)  # 🔥 API protection
+            time.sleep(1)
 
         except Exception as e:
             print(f"{symbol} ERROR:", e)
