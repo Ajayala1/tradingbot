@@ -12,15 +12,17 @@ CHAT_ID = "1037106335"
 
 def send_telegram(msg):
     if TELEGRAM_TOKEN and CHAT_ID:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": msg}
         try:
-            requests.post(url, data=data)
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg},
+                timeout=5
+            )
         except:
             print("Telegram Error")
 
 # ==============================
-# ⚙️ BOT VARIABLES
+# VARIABLES
 # ==============================
 balance = 5000
 trade_open = False
@@ -30,7 +32,7 @@ trade_type = ""
 stop_loss = 0
 
 # ==============================
-# 🔥 COINS
+# COINS
 # ==============================
 all_symbols = [
 "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","MATICUSDT","DOTUSDT","LTCUSDT",
@@ -72,14 +74,18 @@ def get_active_symbols():
     return priority_symbols + rotating
 
 # ==============================
-# SAFE API CALL
+# SAFE API
 # ==============================
 def get_data(symbol, interval):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=50"
-        data = requests.get(url, timeout=10).json()
+        res = requests.get(url, timeout=10)
+        data = res.json()
 
-        if not isinstance(data, list) or len(data) < 20:
+        if not isinstance(data, list):
+            return None, None
+
+        if len(data) < 20:
             return None, None
 
         closes = [float(c[4]) for c in data]
@@ -119,14 +125,18 @@ while True:
             # 4H
             closes_4h, _ = get_data(symbol, "4h")
             if closes_4h is None:
+                print(f"{symbol} ❌ 4H data failed")
                 continue
+
             support = min(closes_4h[-20:])
             resistance = max(closes_4h[-20:])
 
             # 1H
             closes_1h, vol_1h = get_data(symbol, "1h")
             if closes_1h is None:
+                print(f"{symbol} ❌ 1H data failed")
                 continue
+
             df_1h = indicators(closes_1h, vol_1h)
             trend_up = df_1h["close"].iloc[-1] > df_1h["EMA20"].iloc[-1]
             trend_down = df_1h["close"].iloc[-1] < df_1h["EMA20"].iloc[-1]
@@ -134,7 +144,9 @@ while True:
             # 15m
             closes_15m, vol_15m = get_data(symbol, "15m")
             if closes_15m is None:
+                print(f"{symbol} ❌ 15m data failed")
                 continue
+
             df_15m = indicators(closes_15m, vol_15m)
 
             price = df_15m["close"].iloc[-1]
@@ -144,6 +156,7 @@ while True:
 
             avg_vol = df_15m["volume"].rolling(20).mean().iloc[-1]
             cur_vol = df_15m["volume"].iloc[-1]
+
             price_change = (price - prev_price) / prev_price
 
             print(f"{symbol} | Price: {round(price,2)} | RSI: {round(rsi,2)}")
@@ -158,7 +171,7 @@ while True:
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change > PRICE_THRESHOLD
             ):
-                print("BUY")
+                print("📈 BUY")
                 send_telegram(f"📈 BUY {symbol} @ {price}")
 
                 trade_open = True
@@ -178,7 +191,7 @@ while True:
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change < -PRICE_THRESHOLD
             ):
-                print("SHORT")
+                print("📉 SHORT")
                 send_telegram(f"📉 SHORT {symbol} @ {price}")
 
                 trade_open = True
@@ -223,8 +236,10 @@ while True:
 
                         trade_open = False
 
+            time.sleep(1)  # 🔥 API protection
+
         except Exception as e:
-            print("Error:", e)
+            print(f"{symbol} ERROR:", e)
 
     print("Balance:", balance)
     time.sleep(60)
