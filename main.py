@@ -34,18 +34,10 @@ stop_loss = 0
 # ==============================
 # COINS
 # ==============================
-all_symbols = [
-"BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","ADAUSDT","DOGEUSDT","MATICUSDT","DOTUSDT","LTCUSDT",
-"TRXUSDT","AVAXUSDT","SHIBUSDT","ATOMUSDT","LINKUSDT","NEARUSDT","UNIUSDT","APTUSDT","ARBUSDT","OPUSDT",
-"INJUSDT","SUIUSDT","FILUSDT","AAVEUSDT","EOSUSDT","XTZUSDT","THETAUSDT","ALGOUSDT","VETUSDT","ICPUSDT",
-"FLOWUSDT","CHZUSDT","EGLDUSDT","KAVAUSDT","FTMUSDT","HBARUSDT","GRTUSDT","MANAUSDT","SANDUSDT","AXSUSDT",
-"IMXUSDT","RNDRUSDT","PEPEUSDT","BONKUSDT","WLDUSDT","TIAUSDT","SEIUSDT","DYDXUSDT","JASMYUSDT","ENSUSDT"
+symbols = [
+"BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
+"ADAUSDT","DOGEUSDT","MATICUSDT","DOTUSDT","LTCUSDT"
 ]
-
-priority_symbols = ["BTCUSDT","ETHUSDT","BNBUSDT"]
-
-batch_size = 10
-current_index = 0
 
 # ==============================
 # SETTINGS
@@ -57,28 +49,11 @@ TRAIL_START = 0.02
 TRAIL_GAP = 0.02
 
 # ==============================
-# ROTATION
-# ==============================
-def get_active_symbols():
-    global current_index
-    start = current_index
-    end = start + batch_size
-
-    rotating = all_symbols[start:end]
-
-    if end >= len(all_symbols):
-        current_index = 0
-    else:
-        current_index += batch_size
-
-    return priority_symbols + rotating
-
-# ==============================
 # SAFE API
 # ==============================
-def get_data(symbol, interval):
+def get_data(symbol):
     try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=50"
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=50"
         res = requests.get(url, timeout=10)
         data = res.json()
 
@@ -114,45 +89,31 @@ def indicators(closes, volumes):
 while True:
     print("\n========= MARKET CHECK =========")
 
-    active_symbols = get_active_symbols()
-    print("Active:", active_symbols)
-
-    for symbol in active_symbols:
+    for symbol in symbols:
         try:
-            # 🔥 SUPPORT / RESISTANCE (1H)
-            closes_sr, _ = get_data(symbol, "1h")
-            if closes_sr is None:
-                print(f"{symbol} ❌ SR data failed")
+            closes, volumes = get_data(symbol)
+
+            if closes is None:
+                print(f"{symbol} ❌ data failed")
                 continue
 
-            support = min(closes_sr[-20:])
-            resistance = max(closes_sr[-20:])
+            df = indicators(closes, volumes)
 
-            # 🔥 TREND (1H)
-            closes_1h, vol_1h = get_data(symbol, "1h")
-            if closes_1h is None:
-                print(f"{symbol} ❌ 1H data failed")
-                continue
+            price = df["close"].iloc[-1]
+            prev_price = df["close"].iloc[-2]
+            ema = df["EMA20"].iloc[-1]
+            rsi = df["RSI"].iloc[-1]
 
-            df_1h = indicators(closes_1h, vol_1h)
-            trend_up = df_1h["close"].iloc[-1] > df_1h["EMA20"].iloc[-1]
-            trend_down = df_1h["close"].iloc[-1] < df_1h["EMA20"].iloc[-1]
+            # 🔥 SUPPORT / RESISTANCE
+            support = min(df["close"].iloc[-20:])
+            resistance = max(df["close"].iloc[-20:])
 
-            # 🔥 ENTRY (15m)
-            closes_15m, vol_15m = get_data(symbol, "15m")
-            if closes_15m is None:
-                print(f"{symbol} ❌ 15m data failed")
-                continue
+            # 🔥 TREND
+            trend_up = price > ema
+            trend_down = price < ema
 
-            df_15m = indicators(closes_15m, vol_15m)
-
-            price = df_15m["close"].iloc[-1]
-            prev_price = df_15m["close"].iloc[-2]
-            ema = df_15m["EMA20"].iloc[-1]
-            rsi = df_15m["RSI"].iloc[-1]
-
-            avg_vol = df_15m["volume"].rolling(20).mean().iloc[-1]
-            cur_vol = df_15m["volume"].iloc[-1]
+            avg_vol = df["volume"].rolling(20).mean().iloc[-1]
+            cur_vol = df["volume"].iloc[-1]
 
             price_change = (price - prev_price) / prev_price
 
@@ -163,7 +124,6 @@ while True:
                 not trade_open and
                 price <= support * 1.02 and
                 trend_up and
-                price > ema and
                 rsi < 30 and
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change > PRICE_THRESHOLD
@@ -176,14 +136,12 @@ while True:
                 current_symbol = symbol
                 trade_type = "long"
                 stop_loss = price * (1 - SL_PERCENT)
-                break
 
             # ================= SHORT =================
             elif (
                 not trade_open and
                 price >= resistance * 0.98 and
                 trend_down and
-                price < ema and
                 rsi > 70 and
                 cur_vol >= avg_vol * VOLUME_MULTIPLIER and
                 price_change < -PRICE_THRESHOLD
@@ -196,7 +154,6 @@ while True:
                 current_symbol = symbol
                 trade_type = "short"
                 stop_loss = price * (1 + SL_PERCENT)
-                break
 
             # ================= EXIT =================
             elif trade_open and symbol == current_symbol:
@@ -231,7 +188,7 @@ while True:
                         send_telegram(f"🔴 EXIT SHORT {symbol} Profit: {round(profit,2)}")
                         trade_open = False
 
-            time.sleep(1)
+            time.sleep(1)  # 🔥 avoid rate limit
 
         except Exception as e:
             print(f"{symbol} ERROR:", e)
